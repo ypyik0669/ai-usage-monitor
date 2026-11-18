@@ -27,7 +27,7 @@
   - **真实项目目录排行榜**与**最大的 25 个会话明细**；
   - 工具调用次数 Top 25 排行；
   - 细分维度：入口、电脑名、**主线程 / 子代理**、**推理强度**、**底层模型 ID**。
-- **多台电脑无感同步（可选）**：若将本仓库作为你自己的私有 Git 仓库使用，每台电脑每 15 分钟自动将纯统计聚合表写入 `data/usage-<主机名>.json` 并跨设备合并展示（绝不包含任何对话文本）。
+- **多台电脑自助无感同步（内置 `sync_setup.py`）**：任何用户都可使用自己的 GitHub 账号、任意 Git 仓库或云盘目录一键开启跨设备合并统计；代码仓与用户自己的数据仓通过 `sync_dir.txt` 完全解耦，无需手动 Fork 或改动 `.gitignore`。
 
 ### 3. Antigravity 全局模型强制锁插件（`plugins/carbon-high-lock`）
 针对 Antigravity 中「明明在界面和规则里选了 `Gemini 4 Carbon (High)`，但后台 `/teamwork` 子代理却一直跑在 `Gemini 4 Hydrogen (High)`（`#1530`）」的底层硬编码问题，提供五重生命周期钩子硬约束：
@@ -55,6 +55,7 @@ ai-usage-monitor/
 ├── serve.py                       # 本地常驻 HTTP 服务（提供 2s 实时 /live.json 与 60s 聚合刷新）
 ├── live_feed.py                   # 2 秒级在途对话状态与 SQLite Protobuf / JSONL 真实模型采集器
 ├── agg.py                         # Claude Code / Codex / Antigravity 全量日志聚合与跨设备合并脚本
+├── sync_setup.py                  # 多机用量同步自助配置工具（支持用户自己的 GitHub / Git 仓库 / 云盘目录）
 ├── plugins/
 │   └── carbon-high-lock/          # Antigravity 全局 Carbon (High) 强制锁插件
 │       ├── plugin.json            # 插件清单
@@ -65,7 +66,7 @@ ai-usage-monitor/
 │       │   └── AGENTS.md          # 全局常驻模型与编排策略规则
 │       └── README.md              # 插件独立说明文档
 └── scripts/
-    ├── install.ps1                # Windows 一键部署脚本（安装插件 + 启动面板 + 开机自启）
+    ├── install.ps1                # Windows 一键部署脚本（安装插件 + 可选开启多机同步 + 开机自启）
     └── install.sh                 # macOS / Linux 一键部署脚本
 ```
 
@@ -122,18 +123,50 @@ python -X utf8 serve.py
 | 环境变量 | 默认值 | 说明 |
 |---|---|---|
 | `USAGE_DASHBOARD_PORT` | `8797` | `serve.py` 监听的本地端口号 |
+| `USAGE_SYNC_DIR` | 空（读取 `sync_dir.txt`） | 外部多机同步目录路径（可指向 Git 同步数据仓或云盘文件夹） |
 | `USAGE_SHOW_FULL_EMAIL` | `0`（默认自动脱敏） | 实时流默认将账号邮箱脱敏显示为 `ab***yz@gmail.com`（方便直接截图分享）；设为 `1` 可显示完整邮箱 |
 | `CARBON_LOCK_MODELS` | `gemini-4-carbon-high,gemini-pro-orchestrator` | `carbon-high-lock` 插件允许放行的底层 `modelName` 列表（逗号分隔） |
 
 ---
 
-## 多台电脑私有库自动同步（可选）
+## 多台电脑自动同步（内置 `sync_setup.py` 自助调用）
 
-如果你有多台电脑（例如台式机 + 笔记本），希望在同一个面板里合并查看所有电脑的累计用量：
+如果你有多台电脑（例如台式机 + 笔记本），希望在同一个面板里合并查看所有电脑的累计用量，**无需手动 Fork 本项目或修改 `.gitignore`**——直接运行内置的 `sync_setup.py`，即可将代码仓与**你自己的个人同步数据仓 / 云盘**解耦绑定：
 
-1. Fork 或创建一个你自己的 **Private（私有）** GitHub 仓库；
-2. 在每台电脑克隆你的私有仓库，并在 `.gitignore` 中移除 `data/*.json` 一行；
-3. `serve.py` 每 15 分钟会自动运行一次不带 `--no-git` 的 `agg.py`，将当前电脑的纯数字聚合表提交到 `data/usage-<主机名>.json` 并自动拉取合并其他电脑的数据。
+### 方式 A：使用你自己的 GitHub 账号一键自动建库 / 绑库（推荐）
+只要登录了 `gh auth login`，在每台电脑上运行同一条命令即可：
+
+```bash
+# 第 1 台电脑运行：自动在你自己的 GitHub 账号下创建 <你的用户名>/ai-usage-sync 并上传本机统计
+# 第 2 台电脑运行：自动识别已存在的同名仓库，克隆到 ~/.ai-usage-sync 并合并所有电脑数据
+python -X utf8 sync_setup.py
+```
+
+- 默认创建为 **Private（私有）** 仓库，避免暴露你的电脑主机名和本地项目文件夹名；若你希望创建为公开数据仓，可加上 `--public`（或通过 `--repo <仓库名>` 自定义名称）。
+- 一键安装脚本也支持直接加参数同步开启：
+  - Windows：`powershell -ExecutionPolicy Bypass -File "$HOME\usage-dashboard\scripts\install.ps1" -EnableSync`
+  - macOS / Linux：`ENABLE_SYNC=1 bash ~/usage-dashboard/scripts/install.sh`
+
+### 方式 B：绑定任意 Git 远程仓库（GitLab / Gitee / 自建 Gitea / SSH，无需 `gh`）
+
+```bash
+python -X utf8 sync_setup.py --remote git@github.com:yourname/my-usage-sync.git
+```
+
+### 方式 C：绑定本地云盘同步目录（OneDrive / iCloud Drive / Dropbox / Syncthing / NAS，无需 Git）
+
+```bash
+python -X utf8 sync_setup.py --dir "D:\OneDrive\ai-usage-sync"
+```
+
+### 查看同步状态与关闭同步
+
+```bash
+python -X utf8 sync_setup.py --status    # 查看当前同步模式、远程仓库及已汇聚的电脑主机列表
+python -X utf8 sync_setup.py --disable   # 解绑外部同步，恢复仅本机统计
+```
+
+配置完成后，`serve.py` 每 15 分钟会自动拉取并推送 `usage-<主机名>.json`（纯聚合数字，不含任何对话文本）。
 
 ---
 

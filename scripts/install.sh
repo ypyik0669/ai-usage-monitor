@@ -4,6 +4,10 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PORT="${USAGE_DASHBOARD_PORT:-8797}"
 SKIP_PLUGIN="${SKIP_PLUGIN:-0}"
+ENABLE_SYNC="${ENABLE_SYNC:-0}"
+SYNC_REPO="${SYNC_REPO:-ai-usage-sync}"
+SYNC_REMOTE="${SYNC_REMOTE:-}"
+SYNC_DIR="${SYNC_DIR:-}"
 
 PY_BIN="$(command -v python3 || command -v python || true)"
 if [[ -z "${PY_BIN}" ]]; then
@@ -26,7 +30,14 @@ if [[ "${SKIP_PLUGIN}" != "1" ]]; then
 fi
 
 echo "==> [3/3] 生成初始统计并启动后台监控服务 (端口 ${PORT})..."
-"${PY_BIN}" -X utf8 "${REPO_ROOT}/agg.py" --no-git
+if [[ "${ENABLE_SYNC}" == "1" || -n "${SYNC_REMOTE}" || -n "${SYNC_DIR}" ]]; then
+  SYNC_ARGS=(-X utf8 "${REPO_ROOT}/sync_setup.py" --repo "${SYNC_REPO}")
+  [[ -n "${SYNC_REMOTE}" ]] && SYNC_ARGS+=(--remote "${SYNC_REMOTE}")
+  [[ -n "${SYNC_DIR}" ]] && SYNC_ARGS+=(--dir "${SYNC_DIR}")
+  "${PY_BIN}" "${SYNC_ARGS[@]}"
+else
+  "${PY_BIN}" -X utf8 "${REPO_ROOT}/agg.py" --no-git
+fi
 pkill -f "serve.py" 2>/dev/null || true
 nohup env USAGE_DASHBOARD_PORT="${PORT}" "${PY_BIN}" -X utf8 "${REPO_ROOT}/serve.py" >/dev/null 2>&1 &
 

@@ -309,31 +309,67 @@ if codex_last:
         limits.append(dict(provider='chatgpt', plan=rl.get('plan_type') or '', label=('每周' if hrs >= 168 else str(hrs) + ' 小时') + ' · Codex', percent_used=w.get('used_percent'),
                            resets_at=dt.datetime.fromtimestamp(w['resets_at'], TZ).isoformat(timespec='minutes') if w.get('resets_at') else '',
                            captured_at=t0.isoformat(timespec='minutes'), extra=('有 credits 余额 ' + str(cr.get('balance'))) if cr.get('has_credits') else '没有 credits 余额'))
-# Other computers: this folder is a git clone of a private repo. Every machine commits its own tables to
-# data/usage-<HOST>.json and adds in the tables the other machines pushed there.
+# Multi-machine sync:
+# 1) User-configured external sync target via USAGE_SYNC_DIR env or sync_dir.txt (managed by sync_setup.py):
+#    supports any user's own Git repo (GitHub / GitLab / Gitee / SSH) or cloud folder (OneDrive / iCloud / Dropbox / NAS).
+# 2) Legacy in-place sync repo mode: if HERE/.git exists AND data/*.json is NOT ignored by .gitignore.
 import subprocess
-def git(*a):
+def git_in(repo_dir, *a):
     try:
-        r = subprocess.run(['git', '-C', HERE] + list(a), stdin=subprocess.DEVNULL, capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=60)
+        r = subprocess.run(['git', '-C', repo_dir] + list(a), stdin=subprocess.DEVNULL, capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=60)
         return r.returncode, ((r.stdout or '') + (r.stderr or '')).strip()
     except Exception as e:
-        return 1, str(e)
-if os.path.isdir(os.path.join(HERE, '.git')):
-    SYNC = os.path.join(HERE, 'data'); os.makedirs(SYNC, exist_ok=True)
-    rc, out = (0, '') if NO_GIT else git('pull', '--rebase', '--autostash', '-q')
-    if rc: print('git pull failed:', out[-200:])
+        return 127, str(e)
+
+sync_cfg_file = os.path.join(HERE, 'sync_dir.txt')
+ext_sync_root = os.environ.get('USAGE_SYNC_DIR', '').strip()
+if not ext_sync_root and os.path.exists(sync_cfg_file):
+    try:
+        ext_sync_root = open(sync_cfg_file, encoding='utf-8').read().strip()
+    except Exception:
+        ext_sync_root = ''
+if ext_sync_root:
+    ext_sync_root = os.path.abspath(os.path.expanduser(os.path.expandvars(ext_sync_root)))
+
+sync_git_repo = None
+sync_data_dir = None
+if ext_sync_root:
+    os.makedirs(ext_sync_root, exist_ok=True)
+    if os.path.isdir(os.path.join(ext_sync_root, '.git')):
+        sync_git_repo = ext_sync_root
+        sync_data_dir = os.path.join(ext_sync_root, 'data')
+    elif os.path.isdir(os.path.join(ext_sync_root, 'data')):
+        sync_data_dir = os.path.join(ext_sync_root, 'data')
+    else:
+        sync_data_dir = ext_sync_root
+elif os.path.isdir(os.path.join(HERE, '.git')):
+    ign_rc, ign_out = git_in(HERE, 'check-ignore', '-q', 'data/usage-check.json')
+    if ign_rc == 1 and not ign_out:
+        sync_git_repo = HERE
+    sync_data_dir = os.path.join(HERE, 'data')
+
+if sync_data_dir:
+    os.makedirs(sync_data_dir, exist_ok=True)
+    if sync_git_repo and not NO_GIT:
+        rc, out = git_in(sync_git_repo, 'pull', '--rebase', '--autostash', '-q')
+        if rc: print('git pull failed:', out[-200:])
     own = 'usage-%s.json' % HOST
+    own_path = os.path.join(sync_data_dir, own)
     def lines(d):   # one row per line, sorted, so each commit is a small diff
         return '[\n' + ',\n'.join(json.dumps([list(k), [round(x, 4) if isinstance(x, float) else x for x in v] if isinstance(v, list) else v],
                                                ensure_ascii=False, separators=(',', ':')) for k, v in sorted(d.items())) + '\n]'
-    with open(os.path.join(SYNC, own), 'w', encoding='utf-8', newline='\n') as fh:
+    with open(own_path, 'w', encoding='utf-8', newline='\n') as fh:
         fh.write('{"host":%s,\n"hour":%s,\n"dim":%s,\n"sess":%s,\n"tool":%s}\n' % (json.dumps(HOST), lines(hour), lines(dim), lines(sess), lines(tool)))
-    if not NO_GIT: git('add', 'data/' + own)
-    rc, out = (1, '') if NO_GIT else git('commit', '-q', '-m', 'usage ' + HOST, '--', 'data/' + own)
-    if rc == 0:
-        rc, out = git('push', '-q')
-        print('pushed own usage' if rc == 0 else 'git push failed: ' + out[-200:])
-    for f in sorted(glob.glob(os.path.join(SYNC, 'usage-*.json'))):
+    if sync_git_repo and not NO_GIT:
+        rel_own = os.path.relpath(own_path, sync_git_repo).replace('\\', '/')
+        git_in(sync_git_repo, 'add', rel_own)
+        rc, out = git_in(sync_git_repo, 'commit', '-q', '-m', 'usage ' + HOST, '--', rel_own)
+        if rc == 0:
+            rc, out = git_in(sync_git_repo, 'push', '-q')
+            if rc != 0 and ('upstream' in out.lower() or 'has no upstream' in out.lower()):
+                rc, out = git_in(sync_git_repo, 'push', '-u', 'origin', 'HEAD', '-q')
+            print('pushed own usage' if rc == 0 else 'git push failed: ' + out[-200:])
+    for f in sorted(glob.glob(os.path.join(sync_data_dir, 'usage-*.json'))):
         if os.path.basename(f) == own: continue
         try: other = json.load(open(f, encoding='utf-8'))
         except Exception as e:

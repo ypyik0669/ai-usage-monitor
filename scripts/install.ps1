@@ -1,6 +1,11 @@
 ﻿param(
     [switch]$SkipPlugin,
     [switch]$SkipAutoStart,
+    [switch]$EnableSync,
+    [string]$SyncRepo = "ai-usage-sync",
+    [string]$SyncRemote = "",
+    [string]$SyncDir = "",
+    [switch]$PublicSync,
     [int]$Port = 8797
 )
 
@@ -27,7 +32,15 @@ if (-not $SkipPlugin) {
 }
 
 Write-Host "==> [3/3] 生成初始统计数据并启动本地实时监控服务..." -ForegroundColor Cyan
-& $pyExe -X utf8 (Join-Path $RepoRoot "agg.py") --no-git
+if ($EnableSync -or $SyncRemote -or $SyncDir) {
+    $syncArgs = @("-X", "utf8", (Join-Path $RepoRoot "sync_setup.py"), "--repo", $SyncRepo)
+    if ($PublicSync) { $syncArgs += "--public" }
+    if ($SyncRemote) { $syncArgs += @("--remote", $SyncRemote) }
+    if ($SyncDir) { $syncArgs += @("--dir", $SyncDir) }
+    & $pyExe @syncArgs
+} else {
+    & $pyExe -X utf8 (Join-Path $RepoRoot "agg.py") --no-git
+}
 
 Get-CimInstance Win32_Process | Where-Object { $_.Name -match '^pythonw?\.exe$' -and $_.CommandLine -like '*serve.py*' } | ForEach-Object {
     Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue
