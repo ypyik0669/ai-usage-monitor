@@ -1,0 +1,6 @@
+{
+  "name": "carbon-high-lock",
+  "displayName": "Gemini 4 Carbon (High) 全局模型强制锁",
+  "version": "1.0.0",
+  "description": "将 Antigravity 主会话、/teamwork 多智能体团队、全部子代理、动态工作流与原生 swarm 硬性锁定在 Gemini 4 Carbon (High)，自动改写内置 teamwork 并拦截 Hydrogen / Flash / Low 回退。"
+}

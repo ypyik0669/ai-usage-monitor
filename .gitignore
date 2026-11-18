@@ -1,0 +1,8 @@
+usage.json
+limits.json
+sync_dir.txt
+__pycache__/
+antigravity_quota.json
+serve.log
+*.tmp
+data/*.json

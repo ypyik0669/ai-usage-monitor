@@ -1,0 +1,23 @@
+{
+  "carbon-high-enforcer": {
+    "PreInvocation": [
+      {
+        "type": "command",
+        "command": "python -X utf8 hooks/enforce_carbon_high.py",
+        "timeout": 10
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "invoke_subagent|swarm|run_workflow|send_message",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python -X utf8 hooks/enforce_carbon_high.py",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}
